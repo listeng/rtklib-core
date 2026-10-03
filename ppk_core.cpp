@@ -81,37 +81,64 @@ const char* ppk_last_message(void) {
   return g_last_message.c_str();
 }
 
-int ppk_convert_unicore(const char* input, const char* obs_out, const char* nav_out) {
-  // rnxopt_t is large; keep it off the (small) worker thread stack.
-  static rnxopt_t opt;
-  memset(&opt, 0, sizeof(opt));
-  opt.rnxver = 304;
-  opt.obstype = OBSTYPE_PR | OBSTYPE_CP | OBSTYPE_DOP | OBSTYPE_SNR;
-  opt.freqtype = FREQTYPE_ALL;
-  opt.navsys = SYS_GPS | SYS_GLO | SYS_GAL | SYS_QZS | SYS_SBS | SYS_CMP | SYS_IRN;
-  opt.ttol = 0.005;
-  // autopos = 0 lets convrnx fill APPROX POSITION XYZ from a single-point solution, which a
-  // base capture needs when the base position is taken from the RINEX header.
-  opt.autopos = 0;
-  opt.outiono = 1;
-  opt.outtime = 1;
-  opt.outleaps = 1;
-  for (int i = 0; i < RNX_NUMSYS; i++) {
-    for (int j = 0; j < MAXCODE; j++) opt.mask[i][j] = '1';
-    opt.mask[i][MAXCODE] = '\0';
-  }
-  strcpy(opt.prog, "AlbaNav");
-  strcpy(opt.rec[1], "UNICORE");
+namespace {
 
-  // ofile[0] = OBS, ofile[1] = mixed NAV (RINEX 3 with sep_nav = 0); others unused.
+/** RINEX 3.04 conversion options shared by the receiver formats. */
+void initRinexOptions(rnxopt_t* opt) {
+  memset(opt, 0, sizeof(*opt));
+  opt->rnxver = 304;
+  opt->obstype = OBSTYPE_PR | OBSTYPE_CP | OBSTYPE_DOP | OBSTYPE_SNR;
+  opt->freqtype = FREQTYPE_ALL;
+  opt->navsys = SYS_GPS | SYS_GLO | SYS_GAL | SYS_QZS | SYS_SBS | SYS_CMP | SYS_IRN;
+  opt->ttol = 0.005;
+  // autopos = 0 lets convrnx fill APPROX POSITION XYZ: from RTCM 1005/1006 when the stream
+  // has them, otherwise from a single-point solution. The base position may come from there.
+  opt->autopos = 0;
+  opt->outiono = 1;
+  opt->outtime = 1;
+  opt->outleaps = 1;
+  for (int i = 0; i < RNX_NUMSYS; i++) {
+    for (int j = 0; j < MAXCODE; j++) opt->mask[i][j] = '1';
+    opt->mask[i][MAXCODE] = '\0';
+  }
+  strcpy(opt->prog, "AlbaNav");
+}
+
+/** Runs convrnx() with ofile[0] = OBS and ofile[1] = mixed NAV (RINEX 3, sep_nav = 0). */
+int convertToRinex(int format, rnxopt_t* opt, const char* input, const char* obs_out,
+                   const char* nav_out) {
   char outputs[9][1024];
   char* ofile[9];
   memset(outputs, 0, sizeof(outputs));
   snprintf(outputs[0], sizeof(outputs[0]), "%s", obs_out ? obs_out : "");
   snprintf(outputs[1], sizeof(outputs[1]), "%s", nav_out ? nav_out : "");
   for (int i = 0; i < 9; i++) ofile[i] = outputs[i];
+  return convrnx(format, opt, input, ofile);
+}
 
-  return convrnx(STRFMT_UNICORE, &opt, input, ofile);
+}  // namespace
+
+int ppk_convert_rtcm3(const char* input, const char* obs_out, const char* nav_out,
+                      double approx_time) {
+  static rnxopt_t opt;
+  initRinexOptions(&opt);
+  // MSM and SSR messages carry only the time of week (GLONASS: time of day); RTKLIB resolves
+  // the week and day from this approximate time, which must lie within 12 hours of the data.
+  opt.trtcm = toGtime(approx_time);
+  if (opt.trtcm.time == 0) {
+    showmsg("error : no approximate time for RTCM3 conversion");
+    return 0;
+  }
+  // Receiver and antenna fields stay empty: convrnx fills them from RTCM 1033 when present.
+  return convertToRinex(STRFMT_RTCM3, &opt, input, obs_out, nav_out);
+}
+
+int ppk_convert_unicore(const char* input, const char* obs_out, const char* nav_out) {
+  // rnxopt_t is large; keep it off the (small) worker thread stack.
+  static rnxopt_t opt;
+  initRinexOptions(&opt);
+  strcpy(opt.rec[1], "UNICORE");
+  return convertToRinex(STRFMT_UNICORE, &opt, input, obs_out, nav_out);
 }
 
 int ppk_postpos(const char** files, int n, const ppk_options* o, const char* out_file) {
@@ -148,9 +175,24 @@ int ppk_postpos(const char** files, int n, const ppk_options* o, const char* out
     }
     for (int i = 0; i < 3; i++) popt.rb[i] = o->rb[i];
   }
-  // Precise orbits/clocks come from the SP3/CLK files among the inputs (readpreceph()).
-  // Broadcast navigation files are still required: readobsnav() refuses to run without them.
-  popt.sateph = o->sateph == EPHOPT_PREC ? EPHOPT_PREC : EPHOPT_BRDC;
+  // Precise orbits/clocks come from the SP3/CLK files among the inputs (readpreceph()), SSR
+  // corrections from a ".rtcm3" input. Broadcast navigation files are still required:
+  // readobsnav() refuses to run without them, and SSR corrects the broadcast orbits.
+  switch (o->sateph) {
+    case EPHOPT_PREC:
+    case EPHOPT_SSRAPC:
+      popt.sateph = o->sateph;
+      break;
+    default:
+      popt.sateph = EPHOPT_BRDC;
+      break;
+  }
+  // postpos() applies SSR corrections in the forward pass only: a backward pass would run
+  // with the corrections of the last epoch and reject every satellite as too old.
+  if (popt.sateph == EPHOPT_SSRAPC && popt.soltype != SOLTYPE_FORWARD) {
+    showmsg("warning : SSR corrections are forward only, solution direction set to forward");
+    popt.soltype = SOLTYPE_FORWARD;
+  }
   popt.ionoopt = IONOOPT_BRDC;
   // ZTD (+gradient) estimation only makes sense for static data; kinematic stays on the model.
   popt.tropopt = TROPOPT_SAAS;

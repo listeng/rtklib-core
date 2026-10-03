@@ -97,6 +97,20 @@ Java_com_gtech_rtklib_RtkLib_nativeConvertUnicore(
   return ppk_convert_unicore(inputPath.c_str(), obsPath.c_str(), navPath.c_str());
 }
 
+extern "C" JNIEXPORT jint JNICALL
+Java_com_gtech_rtklib_RtkLib_nativeConvertRtcm3(
+    JNIEnv* env, jclass, jstring input, jstring obsOut, jstring navOut, jdouble approxTime,
+    jobject listener) {
+  std::lock_guard<std::mutex> guard(g_lock);
+  ListenerScope scope(env, listener);
+
+  std::string inputPath = toStdString(env, input);
+  std::string obsPath = toStdString(env, obsOut);
+  std::string navPath = toStdString(env, navOut);
+  LOGI("convert rtcm3 %s", inputPath.c_str());
+  return ppk_convert_rtcm3(inputPath.c_str(), obsPath.c_str(), navPath.c_str(), approxTime);
+}
+
 /** options layout matches RtkLib.PpkOptions#toArray(). */
 extern "C" JNIEXPORT jint JNICALL
 Java_com_gtech_rtklib_RtkLib_nativePostPos(

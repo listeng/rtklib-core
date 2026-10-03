@@ -238,9 +238,11 @@ static void update_rtcm_ssr(gtime_t time)
     if (!fp_rtcm) return;
 
     /* read rtcm file until current time */
-    while (timediff(rtcm.time,time)<1E-3) {
-        if (input_rtcm3f(&rtcm,fp_rtcm)<-1) break;
-
+    /* AlbaNav: apply the corrections that have become due before reading on. The loop always
+       reads one message (or multiple-message group) past the current time and keeps it
+       pending; applying only after a read meant the next read overwrote those pending
+       corrections before they were ever applied, so no SSR correction was used. */
+    for (;;) {
         /* update ssr corrections */
         for (i=0;i<MAXSAT;i++) {
             if (!rtcm.ssr[i].update||
@@ -249,6 +251,8 @@ static void update_rtcm_ssr(gtime_t time)
             navs.ssr[i]=rtcm.ssr[i];
             rtcm.ssr[i].update=0;
         }
+        if (timediff(rtcm.time,time)>=1E-3) break;
+        if (input_rtcm3f(&rtcm,fp_rtcm)<-1) break;
     }
 }
 /* Input obs data, navigation messages and sbas correction -------------------*/
