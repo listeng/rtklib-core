@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.22.1)
 
 project("rtklib_core" C CXX)
 
-# Platform-neutral RTKLIB demo5 core plus the PPK helpers (ppk/). Built as a static
+# Platform-neutral RTKLIB demo5 core (rtklib/) plus the C API for apps (api/). Built as a static
 # library; each app adds its own binding on top (Android: JNI in alba-nav/rtklib).
 #
 # Use from another CMake project:
@@ -14,6 +14,9 @@ project("rtklib_core" C CXX)
 # excluded, as in demo5's own CMake build: they no longer compile and rcvraw.c
 # does not call them.
 file(GLOB RTKLIB_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/rtklib/*.c)
+# Local additions inside rtklib/ (not upstream demo5): built with warnings on.
+set(RTKLIB_LOCAL_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/rtklib/gpt3.c)
+list(REMOVE_ITEM RTKLIB_SOURCES ${RTKLIB_LOCAL_SOURCES})
 set(RTKLIB_RCV_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/rtklib/rcv/binex.c
     ${CMAKE_CURRENT_SOURCE_DIR}/rtklib/rcv/crescent.c
@@ -27,20 +30,19 @@ set(RTKLIB_RCV_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/rtklib/rcv/ublox.c
     ${CMAKE_CURRENT_SOURCE_DIR}/rtklib/rcv/unicore.c
 )
-set(PPK_C_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/ppk/gpt3.c)
-set(PPK_CXX_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/ppk/ppk_core.cpp)
+set(API_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/api/ppk_core.cpp)
 
 add_library(rtklib_core STATIC
     ${RTKLIB_SOURCES}
     ${RTKLIB_RCV_SOURCES}
-    ${PPK_C_SOURCES}
-    ${PPK_CXX_SOURCES}
+    ${RTKLIB_LOCAL_SOURCES}
+    ${API_SOURCES}
 )
 
 # Consumers include both "ppk_core.h" and "rtklib.h".
 target_include_directories(rtklib_core PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/rtklib
-    ${CMAKE_CURRENT_SOURCE_DIR}/ppk
+    ${CMAKE_CURRENT_SOURCE_DIR}/api
 )
 
 # Same options as demo5's console apps (app/consapp/*/gcc/makefile). PUBLIC on purpose:
@@ -67,10 +69,10 @@ endif()
 set_source_files_properties(${RTKLIB_SOURCES} ${RTKLIB_RCV_SOURCES} PROPERTIES
     COMPILE_OPTIONS "-std=gnu99;-O2;-w"
 )
-set_source_files_properties(${PPK_C_SOURCES} PROPERTIES
+set_source_files_properties(${RTKLIB_LOCAL_SOURCES} PROPERTIES
     COMPILE_OPTIONS "-std=gnu99;-O2;-Wall"
 )
-set_source_files_properties(${PPK_CXX_SOURCES} PROPERTIES
+set_source_files_properties(${API_SOURCES} PROPERTIES
     COMPILE_OPTIONS "-std=c++17;-Wall"
 )
 
