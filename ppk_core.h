@@ -42,7 +42,7 @@ int ppk_convert_rtcm3(const char* input, const char* obs_out, const char* nav_ou
                       double approx_time);
 
 typedef struct {
-  int mode;            /* PMODE_KINEMA or PMODE_STATIC */
+  int mode;            /* PMODE_KINEMA, PMODE_STATIC, PMODE_PPP_KINEMA or PMODE_PPP_STATIC */
   int soltype;         /* 0: forward, 1: backward, 2: combined */
   int nf;              /* number of frequencies */
   int navsys;          /* SYS_* mask */
@@ -67,7 +67,11 @@ typedef struct {
  * (may contain a '*' wildcard so several base files act as one receiver), and the rest are
  * navigation files (and, with EPHOPT_PREC, SP3 orbit and RINEX clock files; with EPHOPT_SSRAPC,
  * one ".rtcm3" SSR correction log). A file ending in
- * ".erp" is not an observation input: it is read as earth rotation parameters. Writes an RTKLIB .pos file (lat/lon/height, GPST).
+ * ".erp" is not an observation input: it is read as earth rotation parameters. Likewise ".atx"
+ * is an antenna model (several are merged, the first given taking precedence), ".grd" the GPT3 grid (gpt3_1.grd: VMF3 mapping functions and GPT3 zenith
+ * delays) and ".sec" a leap second table. Writes an RTKLIB .pos file (lat/lon/height, GPST).
+ * In the PPP modes there is no base file: the navigation files follow the rover directly, and
+ * the solution uses the ionosphere-free combination with ZTD estimation.
  *
  * @return 0 on success, 1 when cancelled, -1 on error (see ppk_last_message())
  */

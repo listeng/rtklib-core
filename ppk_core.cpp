@@ -10,6 +10,7 @@
 
 extern "C" {
 #include "rtklib.h"
+#include "gpt3.h"
 }
 
 namespace {
@@ -142,7 +143,7 @@ int ppk_convert_unicore(const char* input, const char* obs_out, const char* nav_
 }
 
 int ppk_postpos(const char** files, int n, const ppk_options* o, const char* out_file) {
-  if (n < 3 || n > kMaxInputFiles) {
+  if (n < 2 || n > kMaxInputFiles) {
     showmsg("error : need rover obs, base obs and nav files (got %d)", n);
     return -1;
   }
@@ -193,13 +194,48 @@ int ppk_postpos(const char** files, int n, const ppk_options* o, const char* out
     showmsg("warning : SSR corrections are forward only, solution direction set to forward");
     popt.soltype = SOLTYPE_FORWARD;
   }
-  popt.ionoopt = IONOOPT_BRDC;
-  // ZTD (+gradient) estimation only makes sense for static data; kinematic stays on the model.
-  popt.tropopt = TROPOPT_SAAS;
-  if (o->mode == PMODE_STATIC && (o->tropopt == TROPOPT_EST || o->tropopt == TROPOPT_ESTG)) {
-    popt.tropopt = o->tropopt;
+  bool ppp = o->mode == PMODE_PPP_KINEMA || o->mode == PMODE_PPP_STATIC;
+  bool is_static = o->mode == PMODE_STATIC || o->mode == PMODE_PPP_STATIC;
+  if (ppp) {
+    // PPP has no base to cancel the ionosphere and troposphere: use the dual-frequency
+    // ionosphere-free combination, and always estimate the zenith delay (the model alone
+    // leaves decimetres). Gradients only when asked for, on static data.
+    popt.ionoopt = IONOOPT_IFLC;
+    popt.tropopt = is_static && o->tropopt == TROPOPT_ESTG ? TROPOPT_ESTG : TROPOPT_EST;
+    if (o->modear == ARMODE_PPPAR) {
+      // PPP-AR (ppp_ar.c) needs the uncombined model: L1 and L2 phase each with its own
+      // ambiguity state and a slant ionosphere state per satellite, with the satellite code and
+      // phase biases removed by the absolute OSB of the bias file. The iono-free combination
+      // mixes the two ambiguities into a non-integer one.
+      popt.ionoopt = IONOOPT_EST;
+      popt.armaxiter = 10;     // partial AR: drop up to this many satellites
+      popt.elmaskar = 15.0 * D2R;
+    }
+    // pppos() re-initializes the receiver clock every epoch from the single-point solution,
+    // which pntpos() computes with L1 and the broadcast (Klobuchar) ionosphere. Under a strong
+    // ionosphere that clock is off by 10-20 m, common to all satellites, and the default 5 m
+    // pre-fit test then rejects every carrier phase: the filter runs on code only (metre-level
+    // sigmas, few satellites). The common offset is absorbed by the clock state in the update;
+    // single bad observations are still caught by the post-fit residual test. (Running
+    // pntpos() with the iono-free combination instead was tried: noisier clock, worse result.)
+    popt.maxinno[0] = 100.0;
+    // PPP-specific models, all off by default in prcopt_default: satellite antenna PCV (needs an
+    // ANTEX input), receiver antenna PCV, phase wind-up, and exclusion of eclipsing satellites.
+    // Without wind-up the carrier phase drifts by up to a cycle as the satellite yaws, which
+    // each analysis center's clocks absorb differently.
+    popt.posopt[0] = 1;
+    popt.posopt[1] = 1;
+    popt.posopt[2] = 1;
+    popt.posopt[3] = 1;
+  } else {
+    popt.ionoopt = IONOOPT_BRDC;
+    // ZTD (+gradient) estimation only makes sense for static data; kinematic stays on the model.
+    popt.tropopt = TROPOPT_SAAS;
+    if (is_static && (o->tropopt == TROPOPT_EST || o->tropopt == TROPOPT_ESTG)) {
+      popt.tropopt = o->tropopt;
+    }
   }
-  popt.dynamics = o->mode == PMODE_KINEMA ? 1 : 0;
+  popt.dynamics = o->mode == PMODE_KINEMA || o->mode == PMODE_PPP_KINEMA ? 1 : 0;
   popt.tidecorr = o->tidecorr;
   // "*": take antenna type and ANTENNA: DELTA H/E/N from the RINEX headers.
   strcpy(popt.anttype[0], "*");
@@ -230,8 +266,39 @@ int ppk_postpos(const char** files, int n, const ppk_options* o, const char* out
   // An ".erp" input goes to fopt.eop (earth rotation parameters) instead of the file list.
   static const char* inputs[kMaxInputFiles];
   int count = 0;
+  bool gpt3_grid = false;
   for (int i = 0; i < n; i++) {
     const char* ext = strrchr(files[i], '.');
+    if (ext && (strcmp(ext, ".atx") == 0 || strcmp(ext, ".ATX") == 0)) {
+      // ANTEX antenna model: satellite PCO/PCV (precise orbits refer to the satellite's centre
+      // of mass, the clocks to its antenna phase centre) and receiver antennas by type.
+      // Several files are merged (postpos.c readpcvs()); for an antenna in more than one, the
+      // file given first wins.
+      size_t used = strlen(fopt.satantp);
+      if (used + strlen(files[i]) + 2 > sizeof(fopt.satantp)) {
+        showmsg("warning : too many antenna files, %s ignored", files[i]);
+        continue;
+      }
+      if (used > 0) strcat(fopt.satantp, "\n");
+      strcat(fopt.satantp, files[i]);
+      snprintf(fopt.rcvantp, sizeof(fopt.rcvantp), "%s", fopt.satantp);
+      continue;
+    }
+    if (ext && strcmp(ext, ".grd") == 0) {
+      // GPT3 1-degree grid (gpt3_1.grd): VMF3 mapping functions and GPT3 a priori zenith
+      // delays replace NMF and the standard atmosphere (see gpt3.h).
+      if (gpt3_load(files[i])) {
+        gpt3_grid = true;
+      } else {
+        showmsg("warning : cannot read GPT3 grid %s, ignored", files[i]);
+      }
+      continue;
+    }
+    if (ext && strcmp(ext, ".sec") == 0) {
+      // Leap second table (leap.sec), replacing the one compiled into rtkcmn.c.
+      if (!read_leaps(files[i])) showmsg("warning : cannot read leap seconds %s, ignored", files[i]);
+      continue;
+    }
     if (ext && (strcmp(ext, ".erp") == 0 || strcmp(ext, ".ERP") == 0)) {
       // An unreadable ERP file would make postpos() report "error : no erp data", which reads
       // as a failed run; check it here and go on without it instead.
@@ -246,8 +313,14 @@ int ppk_postpos(const char** files, int n, const ppk_options* o, const char* out
     }
     inputs[count++] = files[i];
   }
-  if (count < 3) {
-    showmsg("error : need rover obs, base obs and nav files (got %d)", count);
+  // The grid stays loaded between runs (it takes a while to parse); a run without it among the
+  // inputs goes back to RTKLIB's own models.
+  if (!gpt3_grid) gpt3_free();
+  // PPP has no base observation file.
+  if (count < (ppp ? 2 : 3)) {
+    showmsg(ppp ? "error : need rover obs and nav files (got %d)"
+                : "error : need rover obs, base obs and nav files (got %d)",
+            count);
     return -1;
   }
   int stat = postpos(ts, te, 0.0, 0.0, &popt, &sopt, &fopt, inputs, count, out_file, "", "");

@@ -24,6 +24,7 @@ set(RTKLIB_RCV_SOURCES
 add_library(rtklib SHARED
     ${RTKLIB_SOURCES}
     ${RTKLIB_RCV_SOURCES}
+    gpt3.c
     ppk_core.cpp
     jni_rtklib.cpp
 )
@@ -45,6 +46,9 @@ target_compile_definitions(rtklib PRIVATE
 # Vendor code: build as C99 with warnings silenced.
 set_source_files_properties(${RTKLIB_SOURCES} ${RTKLIB_RCV_SOURCES} PROPERTIES
     COMPILE_OPTIONS "-std=gnu99;-O2;-w"
+)
+set_source_files_properties(gpt3.c PROPERTIES
+    COMPILE_OPTIONS "-std=gnu99;-O2;-Wall"
 )
 set_source_files_properties(ppk_core.cpp jni_rtklib.cpp PROPERTIES
     COMPILE_OPTIONS "-std=c++17;-Wall"
