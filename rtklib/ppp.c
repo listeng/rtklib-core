@@ -61,7 +61,7 @@
 *                           use E1-E5b for Galileo iono-free LC
 *-----------------------------------------------------------------------------*/
 #include "rtklib.h"
-#include "../gpt3.h" /* AlbaNav: GPT3/VMF3 troposphere */
+#include "gpt3.h" /* AlbaNav: GPT3/VMF3 troposphere */
 
 #define SQR(x)      ((x)*(x))
 #define SQRT(x)     ((x)<=0.0||(x)!=(x)?0.0:sqrt(x))

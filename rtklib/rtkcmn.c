@@ -155,7 +155,7 @@
 #include <sys/types.h>
 #endif
 #include "rtklib.h"
-#include "../gpt3.h" /* AlbaNav: GPT3/VMF3 troposphere */
+#include "gpt3.h" /* AlbaNav: GPT3/VMF3 troposphere */
 
 /* constants -----------------------------------------------------------------*/
 
