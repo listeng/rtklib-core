@@ -61,6 +61,7 @@
 *                           use E1-E5b for Galileo iono-free LC
 *-----------------------------------------------------------------------------*/
 #include "rtklib.h"
+#include "../gpt3.h" /* AlbaNav: GPT3/VMF3 troposphere */
 
 #define SQR(x)      ((x)*(x))
 #define SQRT(x)     ((x)<=0.0||(x)!=(x)?0.0:sqrt(x))
@@ -432,6 +433,16 @@ static void corr_meas(const obsd_t *obs, const nav_t *nav, const double *azel,
             /* apply SSR correction */
             P[i]+=(nav->ssr[obs->sat-1].cbias[obs->code[i]-1]-nav->ssr[obs->sat-1].cbias[ix]);
         }
+        else if (opt->ionoopt==IONOOPT_EST&&nav->osb_vcb[obs->sat-1][obs->code[i]-1]) {
+            /* uncombined PPP(-AR): absolute observable-specific biases of the
+             * very signal tracked, code and phase. Removing the satellite phase
+             * bias leaves an integer ambiguity (plus a receiver bias common to
+             * the satellites tracking the same signal, cancelled by ppp_ar()) */
+            P[i]+=nav->osb_cb[obs->sat-1][obs->code[i]-1];
+            if (nav->osb_vpb[obs->sat-1][obs->code[i]-1]) {
+                L[i]+=nav->osb_pb[obs->sat-1][obs->code[i]-1];
+            }
+        }
         else {   /* apply code bias corrections from file */
             if (sys==SYS_GAL&&(i==1||i==2)) frq=3-i;  /* GAL biases are L1/L5 */
             else frq=i;  /* other biases are L1/L2 */
@@ -618,14 +629,10 @@ static void udclk_ppp(rtk_t *rtk)
 
     /* initialize every epoch for clock (white noise) */
     for (i=0;i<NSYS;i++) {
-        if (rtk->opt.sateph==EPHOPT_PREC) {
-            /* time of prec ephemeris is based gpst */
-            /* neglect receiver inter-system bias  */
-            dtr=rtk->sol.dtr[0];
-        }
-        else {
-            dtr=i==0?rtk->sol.dtr[0]:rtk->sol.dtr[0]+rtk->sol.dtr[i];
-        }
+        /* start from the single-point clock of the system, inter-system bias
+         * included also with precise ephemeris: without GPS satellites dtr[0] is
+         * 0 and the other systems' clocks would start kilometres off */
+        dtr=i==0?rtk->sol.dtr[0]:rtk->sol.dtr[0]+rtk->sol.dtr[i];
         initx(rtk,CLIGHT*dtr,VAR_CLK,IC(i,&rtk->opt));
     }
 }
@@ -640,6 +647,11 @@ static void udtrop_ppp(rtk_t *rtk)
     if (rtk->x[i]==0.0) {
         ecef2pos(rtk->sol.rr,pos);
         ztd=sbstropcorr(rtk->sol.time,pos,azel,&var);
+        /* AlbaNav: a priori ZTD from GPT3 when gpt3_1.grd is loaded; keep the SBAS variance */
+        {
+            double zhd,zwd;
+            if (gpt3_zenith(rtk->sol.time,pos,&zhd,&zwd)) ztd=zhd+zwd;
+        }
         initx(rtk,ztd,var,i);
 
         if (rtk->opt.tropopt>=TROPOPT_ESTG) {
@@ -737,6 +749,19 @@ static void udbias_ppp(rtk_t *rtk, const obsd_t *obs, int n, const nav_t *nav)
 
     /* detect slip by Melbourne-Wubbena linear combination jump */
     detslp_mw(rtk,obs,n,nav);
+
+    /* a change of the tracked signal on a frequency (e.g. GPS L2W <-> L2L)
+     * changes the phase bias: restart the ambiguity */
+    for (i=0;i<n&&i<MAXOBS;i++) for (j=0;j<rtk->opt.nf;j++) {
+        int *prev=&rtk->ssat[obs[i].sat-1].code[j][0];
+        if (!obs[i].code[j]) continue;
+        if (*prev&&*prev!=obs[i].code[j]) {
+            trace(2,"udbias_ppp: signal changed sat=%2d f=%d code %d->%d\n",
+                  obs[i].sat,j+1,*prev,obs[i].code[j]);
+            rtk->ssat[obs[i].sat-1].slip[j]|=LLI_SLIP;
+        }
+        *prev=obs[i].code[j];
+    }
 
     for (f=0;f<NF(&rtk->opt);f++) {
 
@@ -855,8 +880,11 @@ static double trop_model_prec(gtime_t time, const double *pos,
     const double zazel[]={0.0,PI/2.0};
     double zhd,m_h,m_w,cotz,grad_n,grad_e;
 
-    /* zenith hydrostatic delay */
-    zhd=tropmodel(time,pos,zazel,0.0);
+    /* zenith hydrostatic delay (AlbaNav: from GPT3 pressure when gpt3_1.grd is loaded) */
+    {
+        double zwd;
+        if (!gpt3_zenith(time,pos,&zhd,&zwd)) zhd=tropmodel(time,pos,zazel,0.0);
+    }
 
     /* mapping function */
     m_h=tropmapf(time,pos,azel,&m_w);

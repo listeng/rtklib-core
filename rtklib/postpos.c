@@ -897,23 +897,32 @@ static int antpos(prcopt_t *opt, int rcvno, const obs_t *obs, const nav_t *nav,
     return 1;
 }
 /* open processing session ----------------------------------------------------*/
+/* AlbaNav: read several antenna files separated by '\n' into one table. readpcv()
+ * appends and searchpcv() takes the first match, so earlier files take precedence. */
+static int readpcvs(const char *files, pcvs_t *pcvs)
+{
+    char buff[MAXSTRPATH],*p,*q;
+
+    snprintf(buff,sizeof(buff),"%s",files);
+    for (p=strtok_r(buff,"\n",&q);p;p=strtok_r(NULL,"\n",&q)) {
+        if (!readpcv(p,pcvs)) {
+            showmsg("error : no ant pcv in %s",p);
+            trace(1,"antenna pcv read error: %s\n",p);
+            return 0;
+        }
+    }
+    return 1;
+}
 static int openses(const prcopt_t *popt, const solopt_t *sopt,
                    const filopt_t *fopt, nav_t *nav, pcvs_t *pcvs, pcvs_t *pcvr)
 {
     trace(3,"openses :\n");
 
     /* read satellite antenna parameters */
-    if (*fopt->satantp&&!(readpcv(fopt->satantp,pcvs))) {
-        showmsg("error : no sat ant pcv in %s",fopt->satantp);
-        trace(1,"sat antenna pcv read error: %s\n",fopt->satantp);
-        return 0;
-    }
+    if (*fopt->satantp&&!readpcvs(fopt->satantp,pcvs)) return 0;
+
     /* read receiver antenna parameters */
-    if (*fopt->rcvantp&&!(readpcv(fopt->rcvantp,pcvr))) {
-        showmsg("error : no rec ant pcv in %s",fopt->rcvantp);
-        trace(1,"rec antenna pcv read error: %s\n",fopt->rcvantp);
-        return 0;
-    }
+    if (*fopt->rcvantp&&!readpcvs(fopt->rcvantp,pcvr)) return 0;
     /* open geoid data */
     if (sopt->geoid>0&&*fopt->geoid) {
         if (!opengeoid(sopt->geoid,fopt->geoid)) {

@@ -903,6 +903,24 @@ static int decode_obsdata(FILE *fp, char *buff, double ver, int mask,
         trace(4, "obs: i=%d f=%d P=%14.3f L=%14.3f LLI=%d code=%d\n",i,p[i],obs->P[p[i]],
         obs->L[p[i]],obs->LLI[p[i]],obs->code[p[i]]);
     }
+    /* The header fixes one code per frequency slot (the highest priority one, e.g. GPS
+     * C2W, BDS C7I); a satellite that lacks it but tracks another code on the same
+     * frequency (C2L, C7P) would have that one parked in an extended slot and lose the
+     * frequency, and with it the dual-frequency (iono-free) combination. Move it in. */
+    for (i=0;i<NFREQ;i++) {
+        int sys=satsys(obs->sat,NULL),e;
+        if (obs->P[i]!=0.0||obs->L[i]!=0.0) continue;
+        for (e=NFREQ;e<NFREQ+NEXOBS;e++) {
+            if (!obs->code[e]||code2idx(sys,obs->code[e])!=i) continue;
+            if (obs->P[e]==0.0&&obs->L[e]==0.0) continue;
+            obs->P[i]=obs->P[e]; obs->L[i]=obs->L[e]; obs->D[i]=obs->D[e];
+            obs->SNR[i]=obs->SNR[e]; obs->LLI[i]=obs->LLI[e]; obs->code[i]=obs->code[e];
+            obs->Pstd[i]=obs->Pstd[e]; obs->Lstd[i]=obs->Lstd[e];
+            obs->P[e]=obs->L[e]=0.0; obs->D[e]=obs->SNR[e]=0.0;
+            obs->LLI[e]=obs->code[e]=0; obs->Pstd[e]=obs->Lstd[e]=0.0;
+            break;
+        }
+    }
     char tstr[40];
     trace(4,"decode_obsdata: time=%s sat=%2d\n",time2str(obs->time,tstr,0),obs->sat);
     return 1;
@@ -1372,6 +1390,23 @@ static int decode_seph(double ver, int sat, gtime_t toc, double *data,
     return 1;
 }
 /* read RINEX navigation data body -------------------------------------------*/
+/* RINEX 4 record header "> EPH G01 LNAV": 1 for an ephemeris whose body is laid
+ * out as in RINEX 3.05 (GPS/QZSS/NavIC LNAV, GLONASS FDMA, Galileo I/NAV and F/NAV,
+ * BeiDou D1/D2, SBAS), 0 for STO/EOP/ION records and the new CNAV/CNV1-3 messages,
+ * which are skipped -----------------------------------------------------------*/
+static int rinex4_eph_header(const char *buff)
+{
+    static const char *types[]={"LNAV","FDMA","INAV","FNAV","D1","D2","SBAS",NULL};
+    char rec[8]="",sat[8]="",msg[8]="";
+    int i;
+
+    if (sscanf(buff,"> %7s %7s %7s",rec,sat,msg)<3||strcmp(rec,"EPH")) return 0;
+    for (i=0;types[i];i++) {
+        if (!strcmp(msg,types[i])) return 1;
+    }
+    trace(3,"rinex 4 nav message skipped: %s %s\n",sat,msg);
+    return 0;
+}
 static int readrnxnavb(FILE *fp, const char *opt, double ver, int sys,
                        int *type, eph_t *eph, geph_t *geph, seph_t *seph)
 {
@@ -1392,6 +1427,12 @@ static int readrnxnavb(FILE *fp, const char *opt, double ver, int sys,
 
         if (i==0) {
 
+            /* RINEX 4: each record follows a "> EPH sat type" line; lines of
+             * skipped records (STO, EOP, ION, CNAV, ...) never start with '>' */
+            if (ver>=4.0) {
+                if (buff[0]!='>'||!rinex4_eph_header(buff)) continue;
+                if (!fgets(buff,MAXRNXLEN,fp)) break;
+            }
             /* decode satellite field */
             if (ver>=3.0||sys==SYS_GAL||sys==SYS_QZS) { /* ver.3 or GAL/QZS */
                 snprintf(id,8,"%.3s",buff);

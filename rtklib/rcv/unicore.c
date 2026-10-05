@@ -784,12 +784,26 @@ static int decode_obsvmb(raw_t* raw)
                 raw->nav.glo_fcn[prn - 1] = gfrq; /* fcn+8 */
             }
         }
-        if (raw->tobs[sat - 1][idx].time != 0) {
-            tt = timediff(raw->time, raw->tobs[sat - 1][idx]);
-            lli = lockt - raw->lockt[sat - 1][idx] + 0.05 <= tt ? LLI_SLIP : 0;
-        }
-        else {
-            lli = 0;
+        /* Lock time is remembered per signal, not per frequency slot: a satellite
+         * tracked on two signals of one frequency (GPS L2W and L2L) shares the
+         * slot, and the other signal's lock time would flag a slip every epoch */
+        {
+            static gtime_t tobs_code[MAXSAT][MAXCODE];
+            static double lockt_code[MAXSAT][MAXCODE];
+            gtime_t* t0 = &tobs_code[sat - 1][code - 1];
+            double* l0 = &lockt_code[sat - 1][code - 1];
+
+            /* state left by another file (static) is ignored: time must advance */
+            if (t0->time != 0 && timediff(raw->time, *t0) > 0.0 &&
+                timediff(raw->time, *t0) < 3600.0) {
+                tt = timediff(raw->time, *t0);
+                lli = lockt - *l0 + 0.05 <= tt ? LLI_SLIP : 0;
+            }
+            else {
+                lli = 0;
+            }
+            *t0 = raw->time;
+            *l0 = lockt;
         }
         //      if (!parity) lli |= LLI_HALFC;
         //      if (halfc) lli |= LLI_HALFA;

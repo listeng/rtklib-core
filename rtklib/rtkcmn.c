@@ -155,6 +155,7 @@
 #include <sys/types.h>
 #endif
 #include "rtklib.h"
+#include "../gpt3.h" /* AlbaNav: GPT3/VMF3 troposphere */
 
 /* constants -----------------------------------------------------------------*/
 
@@ -3855,6 +3856,11 @@ extern double tropmapf(gtime_t time, const double pos[], const double azel[],
     if (pos[2]<-1000.0||pos[2]>20000.0) {
         if (mapfw) *mapfw=0.0;
         return 0.0;
+    }
+    /* AlbaNav: VMF3 with GPT3 coefficients when gpt3_1.grd is loaded (gpt3.c) */
+    {
+        double mfh;
+        if (gpt3_mapf(time,pos,azel,&mfh,mapfw)) return mfh;
     }
 #ifdef IERS_MODEL
     mjd=51544.5+(timediff(time,epoch2time(ep)))/86400.0;

@@ -461,7 +461,24 @@ static int readbiaf(const char *file, nav_t *nav)
     }
     while (fgets(buff,sizeof(buff),fp)) {
         if (sscanf(buff,"%4s %5s %4s %4s %4s",bias,svn,prn,obs1,obs2)<5) continue;
-        if (obs1[0]!='C') continue;  /* skip phase biases for now */
+
+        /* absolute OSB of every satellite signal, code and phase, for the
+         * uncombined PPP(-AR) model (see corr_meas() in ppp.c). The value is
+         * observed-minus-true, so the correction added to the observation is
+         * its negative. Station records (no PRN) are skipped */
+        if (!strcmp(bias,"OSB")&&strlen(prn)==3&&(obs1[0]=='C'||obs1[0]=='L')&&
+            (sat=satid2no(prn))>0&&(code1=obs2code(&obs1[1]))>0) {
+            double val=str2num(buff,70,21)*1E-9*CLIGHT; /* ns -> m */
+            if (obs1[0]=='C') {
+                nav->osb_cb[sat-1][code1-1]=-val;
+                nav->osb_vcb[sat-1][code1-1]=1;
+            }
+            else {
+                nav->osb_pb[sat-1][code1-1]=-val;
+                nav->osb_vpb[sat-1][code1-1]=1;
+            }
+        }
+        if (obs1[0]!='C') continue;  /* phase biases: OSB table above only */
         if ((cbias=str2num(buff,70,21))==0.0) continue;
         sat=satid2no(prn);
         sys=satsys(sat,NULL);
@@ -523,6 +540,8 @@ extern int readdcb(const char *file, nav_t *nav, const sta_t *sta)
     for (i=0;i<MAXSAT;i++) for (j=0;j<MAX_CODE_BIAS_FREQS;j++) for (k=0;k<MAX_CODE_BIASES;k++) {
         nav->cbias[i][j][k]=0.0;
     }
+    memset(nav->osb_vcb,0,sizeof(nav->osb_vcb));
+    memset(nav->osb_vpb,0,sizeof(nav->osb_vpb));
     for (i=0;i<MAXEXFILE;i++) {
         if (!(efiles[i]=(char *)malloc(1024))) {
             for (i--;i>=0;i--) free(efiles[i]);

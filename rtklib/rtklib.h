@@ -446,6 +446,7 @@ extern "C" {
 #define ARMODE_CONT 1                   /* AR mode: continuous */
 #define ARMODE_INST 2                   /* AR mode: instantaneous */
 #define ARMODE_FIXHOLD 3                /* AR mode: fix and hold */
+#define ARMODE_PPPAR 4                  /* AR mode: PPP-AR */
 
 #define GLO_ARMODE_OFF  0               /* GLO AR mode: off */
 #define GLO_ARMODE_ON 1                 /* GLO AR mode: on */
@@ -876,6 +877,12 @@ typedef struct {        /* navigation data type */
     sbsion_t sbsion[MAXBAND+1]; /* SBAS ionosphere corrections */
     dgps_t dgps[MAXSAT]; /* DGPS corrections */
     ssr_t ssr[MAXSAT];  /* SSR corrections */
+    /* absolute observable-specific biases (Bias-SINEX OSB) per satellite and obs
+     * code (CODE_???-1), sign as observed-minus-OSB: add to the observation (m) */
+    double osb_cb[MAXSAT][MAXCODE]; /* code biases (m) */
+    double osb_pb[MAXSAT][MAXCODE]; /* phase biases (m) */
+    uint8_t osb_vcb[MAXSAT][MAXCODE]; /* code bias valid */
+    uint8_t osb_vpb[MAXSAT][MAXCODE]; /* phase bias valid */
 } nav_t;
 
 typedef struct {        /* station parameter type */
