@@ -57,16 +57,18 @@ typedef struct {
   double ts;           /* start time, GPST calendar as seconds since 1970 (0: all) */
   double te;           /* end time, same scale (0: all) */
   int tropopt;         /* TROPOPT_SAAS, TROPOPT_EST or TROPOPT_ESTG */
-  int sateph;          /* EPHOPT_BRDC, EPHOPT_PREC (SP3/CLK among the input files) or
-                          EPHOPT_SSRAPC (a ".rtcm3" SSR log among them; forces forward) */
+  int sateph;          /* EPHOPT_BRDC, EPHOPT_PREC (SP3/CLK among the input files),
+                          EPHOPT_SSRAPC or EPHOPT_SSRCOM (a ".rtcm3" SSR log among them,
+                          corrections to the antenna phase centre / centre of mass; forces
+                          forward) */
   int tidecorr;        /* earth tide correction: 0 off, 1 solid earth tide */
 } ppk_options;
 
 /**
  * Runs RTKLIB postpos(). files[0] is the rover RINEX obs file, files[1] the base obs file
  * (may contain a '*' wildcard so several base files act as one receiver), and the rest are
- * navigation files (and, with EPHOPT_PREC, SP3 orbit and RINEX clock files; with EPHOPT_SSRAPC,
- * one ".rtcm3" SSR correction log). A file ending in
+ * navigation files (and, with EPHOPT_PREC, SP3 orbit and RINEX clock files; with EPHOPT_SSRAPC or
+ * EPHOPT_SSRCOM, one ".rtcm3" SSR correction log). A file ending in
  * ".erp" is not an observation input: it is read as earth rotation parameters. Likewise ".atx"
  * is an antenna model (several are merged, the first given taking precedence), ".grd" the GPT3 grid (gpt3_1.grd: VMF3 mapping functions and GPT3 zenith
  * delays) and ".sec" a leap second table. Writes an RTKLIB .pos file (lat/lon/height, GPST).

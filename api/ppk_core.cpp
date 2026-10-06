@@ -177,11 +177,13 @@ int ppk_postpos(const char** files, int n, const ppk_options* o, const char* out
     for (int i = 0; i < 3; i++) popt.rb[i] = o->rb[i];
   }
   // Precise orbits/clocks come from the SP3/CLK files among the inputs (readpreceph()), SSR
-  // corrections from a ".rtcm3" input. Broadcast navigation files are still required:
+  // corrections from a ".rtcm3" input (SSRAPC: corrections refer to the antenna phase centre,
+  // SSRCOM: to the centre of mass). Broadcast navigation files are still required:
   // readobsnav() refuses to run without them, and SSR corrects the broadcast orbits.
   switch (o->sateph) {
     case EPHOPT_PREC:
     case EPHOPT_SSRAPC:
+    case EPHOPT_SSRCOM:
       popt.sateph = o->sateph;
       break;
     default:
@@ -190,7 +192,8 @@ int ppk_postpos(const char** files, int n, const ppk_options* o, const char* out
   }
   // postpos() applies SSR corrections in the forward pass only: a backward pass would run
   // with the corrections of the last epoch and reject every satellite as too old.
-  if (popt.sateph == EPHOPT_SSRAPC && popt.soltype != SOLTYPE_FORWARD) {
+  bool ssr = popt.sateph == EPHOPT_SSRAPC || popt.sateph == EPHOPT_SSRCOM;
+  if (ssr && popt.soltype != SOLTYPE_FORWARD) {
     showmsg("warning : SSR corrections are forward only, solution direction set to forward");
     popt.soltype = SOLTYPE_FORWARD;
   }
